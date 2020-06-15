@@ -1,0 +1,688 @@
+#######################################################
+#### Moralizaton Bias of Gods' Minds - Supplements ####
+#######################################################
+
+# contact author: Benjamin Grant Purzycki (email: bgpurzycki@cas.au.dk)
+# Last Updated June 6, 2020
+
+#########################
+######### Setup #########
+#########################
+
+rm(list = ls())
+
+setwd("")
+
+library(gmodels)
+library(lme4)
+library(xtable)
+library(doBy)
+library(rethinking) # need to install rstan as well if need be
+library(reshape)
+library(car)
+library(AnthroTools)
+library(brms)
+library(car)
+
+# Dummy code function
+mordum <- function(vd, vo){
+  vd <- NA
+  vd[vo==0] <- 0
+  vd[vo>=1] <- 1
+  return(vd)
+}
+
+# Center by site function
+centerbysite <- function(v,s) {
+  return(v - tapply(v, s, mean, na.rm = T)[s])
+}
+
+# OR and 95% CI reporting function for MLM
+summods <- function(model){
+  se <- sqrt(diag(vcov(model)))
+  tab <- cbind(OR = fixef(model), Lower = fixef(model) - 1.96 * se, Upper = fixef(model) + 1.96 * se)
+  ors <- data.frame(exp(tab))
+  fix <- fixef(model)[1]
+  re <- ranef(model)
+  AIC <- AIC(model)
+  log <- logLik(model)
+  out <- list("Intercept" = fix, "ORs and CI's" = ors, 
+              "Random Effects" = re, "AIC" = AIC, "logLik" = log)
+  return(out)
+}
+
+## Table function
+sitetease <- function(m){
+  siteints <- summods(m)$'Random Effects'$site
+  siteints$plusindint <- siteints$`(Intercept)`+ fixef(m)[1]
+  siteints$betaind <- siteints$g1 + fixef(m)[2]
+  siteints$prplsind <- logistic(siteints$`(Intercept)`+ fixef(m)[1])
+  siteints$orplsind <- exp((siteints$`(Intercept)`+ fixef(m)[1]))
+  siteints <- siteints[,c(1,3,5,6,2,4)]
+  siteints <- siteints[order(-siteints$prplsind),]
+  return(siteints)
+}
+
+############################################
+############ Load and prep data ############
+############################################
+d <- read.csv("ALLSITES_V3.6.csv")
+labs <- c("SITE", "CID", "SEX", "AGE", "FORMALED", "BGMURDIMP", "BGLIEIMP", 
+          "BGSTLIMP", "LGMURDIMP", "LGSTEALIMP", "LGLIEIMP", "LGTYPE")
+data <- d[labs]
+
+data$MURDBIN.BG <-mordum(data$MURDBIN.BG, data$BGMURDIMP) 
+data$LIEBIN.BG <- mordum(data$LIEBIN.BG, data$BGLIEIMP)
+data$STLBIN.BG <- mordum(data$STLBIN.BG, data$BGSTLIMP)
+data$MURDBIN.LG <- mordum(data$MURDBIN.LG, data$LGMURDIMP)
+data$LIEBIN.LG <- mordum(data$LIEBIN.LG, data$LGLIEIMP)
+data$STLBIN.LG <- mordum(data$STLBIN.LG, data$LGSTEALIMP)
+
+# Code for Christian sites
+sit.c <- c("Co.Tanna","Yasawa","Kananga","Samburu",
+           "Turkana","Huatasani","Marajo","Sursurunga","Cachoeira")
+data$CHRIST[data$SITE %in% sit.c] <- 1
+data$CHRIST[!data$SITE %in% sit.c] <- 0
+
+# Recode for LGTYPE (Huatasani and Kananga had two different local deities)
+data$site.n <- NA
+data$site.n[data$LGTYPE==1] <- "Huatasani.a"
+data$site.n[data$LGTYPE==2] <- "Huatasani.s"
+data$site.n[data$LGTYPE==3] <- "Kananga.k"
+data$site.n[data$LGTYPE==4] <- "Kananga.a"
+data$site.n[data$SITE=="Co.Tanna"] <- "Co.Tanna"
+data$site.n[data$SITE=="Yasawa"] <- "Yasawa"
+data$site.n[data$SITE=="Samburu"] <- "Samburu"
+data$site.n[data$SITE=="Turkana"] <- "Turkana"
+data$site.n[data$SITE=="Marajo"] <- "Marajo"
+data$site.n[data$SITE=="Sursurunga"] <- "Sursurunga"
+data$site.n[data$SITE=="Cachoeira"] <- "Cachoeira"
+data$site.n[data$SITE=="Tyva Republic"] <- "Tyva Republic"
+data$site.n[data$SITE=="Hadza"] <- "Hadza"
+data$site.n[data$SITE=="In.Tanna"] <- "In.Tanna"
+data$site.n[data$SITE=="Lovu"] <- "Lovu"
+data$site.n[data$SITE=="Mauritius"] <- "Mauritius"
+data$site.n[data$SITE=="Mysore"] <- "Mysore"
+
+data$AGE.C <- centerbysite(data$AGE, data$SITE)
+data$EDU.C <- centerbysite(data$FORMALED, data$SITE)
+
+#############################
+### Table 1: Demographics ###
+#############################
+demog <- summaryBy(SEX + AGE + FORMALED ~ SITE, 
+                 data = data, 
+                 FUN = function(x) { c(N = length(x), 
+                 n = sum(x, na.rm = TRUE), 
+                 m = mean(x, na.rm = TRUE), 
+                 s = sd(x, na.rm = TRUE)) } )
+
+tlabs <- c("SITE", "SEX.N", "SEX.n", "AGE.m", "AGE.s", "FORMALED.m", "FORMALED.s")
+demtab <- demog[tlabs]
+
+demtab$SITE <- as.character(demtab$SITE)
+demtab$SITE[which(demtab$SITE=="Co.Tanna")] <- "Coastal Tanna"
+demtab$SITE[which(demtab$SITE=="In.Tanna")] <- "Inland Tanna"
+demtab$SITE[which(demtab$SITE=="Tyva Republic")] <- "Tyva"
+
+demtab <- demtab[-1,]       
+
+res <- matrix(NA, ncol = 9,nrow = 16)             
+colnames(res) <- c("Site", "N", "Males", "Age", "Yrs. Formal Ed.", 
+                   "Moralistic Deity", "Moral Index", "Local Deity","Moral Index")  
+
+res[,1] <- c(demtab$SITE, "Mean")  
+res[,2] <- c(demtab$SEX.N, mean(demtab$SEX.N))   
+res[,3] <- c(demtab$SEX.n, mean(demtab$SEX.n))    
+res[,4] <- c(paste0(round(demtab$AGE.m,1)," (",round(demtab$AGE.s,1),")"), 
+             paste0(round(mean(data$AGE,na.rm=TRUE),1)," (",round(sd(data$AGE,na.rm=TRUE),1),")"))             
+res[,5] <- c(paste0(round(demtab$FORMALED.m,1)," (",round(demtab$FORMALED.s,1),")"), 
+             paste0(round(mean(data$FORMALED,na.rm=TRUE),1)," (",round(sd(data$FORMALED,na.rm=TRUE),1),")")) 
+res[,6] <- c("Christian god","Christian god","Haine","Christian god","Kalpapan","Christian god","Shiva","Christian god",
+             "Shiva", "Shiva","Christian god","Christian god","Christian god","Buddha Burgan","Christian god","---")
+res[,8] <- c("Ogum","Garden spirit","Ishoko","Mountain spirits/saints$^*$","Garden spirit","Kadima/ancestor spirits$^*$","---","Saint Mary","Nam (a spirit)",
+             "Chamundeschwari","---","Forest spirit","Ancestor spirits","Spirit-masters","Ancestor spirits","---")
+
+scrap <- cbind(data$BGMURDIMP, data$BGLIEIMP, data$BGSTLIMP)
+MI <- c()
+MIsd <- c() 
+for( i in 1:15){  
+  scrap2 <- ifelse(scrap[which( data$SITE==unique(data$SITE)[i] ),]>0,1,0) 
+  MI[i] <- mean(scrap2,na.rm = TRUE)
+  MIsd[i] <- sd(scrap2,na.rm = TRUE)               
+}               
+
+cbind(MI, MIsd, as.character(unique(data$SITE)[1:15]))
+
+scrap <- cbind(data$LGMURDIMP, data$LGLIEIMP, data$LGSTEALIMP)
+LI <- c()
+LIsd <- c() 
+for( i in 1:15){  
+  scrap2 <- ifelse(scrap[which( data$SITE==unique(data$SITE)[i] ),]>0,1,0) 
+  LI[i] <- mean(scrap2, na.rm = TRUE)
+  LIsd[i] <- sd(scrap2, na.rm = TRUE)              
+}  
+
+cbind(LI, LIsd, as.character(unique(data$SITE)[1:15]))
+
+######################################################
+################## Stack and recode ##################
+######################################################
+ds <- melt(data, id.vars = c("SITE", "site.n", "CID", "SEX", "AGE.C", "EDU.C"), 
+           measure.vars = c("MURDBIN.BG", "LIEBIN.BG", "STLBIN.BG", "MURDBIN.LG", "LIEBIN.LG", "STLBIN.LG"))
+ds$GOD <- recode(ds$variable, "'MURDBIN.BG'='1'; 'LIEBIN.BG'='1'; 'STLBIN.BG'='1';
+          'MURDBIN.LG' = '0'; 'LIEBIN.LG' = '0'; 'STLBIN.LG'='0'")
+ds$ITEM.TYPE <- recode(ds$variable, "'MURDBIN.BG'='MURDER'; 'LIEBIN.BG'='LIE'; 'STLBIN.BG'='STEAL';
+          'MURDBIN.LG' = 'MURDER'; 'LIEBIN.LG' = 'LIE'; 'STLBIN.LG'='STEAL'")
+ds$CHRIST <- recode(ds$SITE, "'Cachoeira'='1'; 'Co.Tanna'='1'; 'Hadza'='0';
+          'Huatasani' = '0'; 'In.Tanna' = '0'; 'Kananga'='1'; 'Lovu'='0'; 'Marajo'='1'; 'Mauritius'='0';
+          'Mysore' = '0'; 'Samburu' = '1'; 'Sursurunga'='1'; 'Turkana' = '1'; 'Tyva Republic' = '0'; 
+           'Yasawa'='1'")
+ds$revsex <- NA # for use when coefficients represent women (= 1) rather than men (= 0)
+ds$revsex[ds$SEX==1] <- 0
+ds$revsex[ds$SEX==0] <- 1
+
+####################################
+###### Models in Table S1 ##########
+####################################
+# Variable definitions
+
+y <- ds$value # vector of repeated measures of binary beliefs
+g <- as.factor(ds$GOD) # 1 for moralistic god; 0 for local god 
+age <- ds$AGE.C # centered at sample mean
+item <- as.factor(ds$ITEM.TYPE) # moral index item type
+site <- as.factor(ds$SITE) # field site
+siten <- as.factor(ds$site.n) # for subsetted local gods
+sex <- as.factor(ds$SEX) # partcipant sex
+edu <- ds$EDU.C # centered years of formal education
+id <- as.factor(ds$CID)
+christ <- as.factor(ds$CHRIST) # Christian god as moralistic god
+revsex <- as.factor(ds$revsex)
+
+xxx <- data.frame(cbind(y, g, item, site, siten, age, sex, edu)) # Data for m0 with complete cases (compare nobs to m1-m3)
+xyy <- xxx[complete.cases(xxx),]
+xyy$g <- as.factor(xyy$g)
+xyy$item <- as.factor(xyy$item)
+xyy$site <- as.factor(xyy$site)
+xyy$siten <- as.factor(xyy$siten)
+
+m0 <- glmer(xyy$y ~ 1 + (1 | item) + (1 | site), family = binomial, data = xyy)
+m1 <- glmer(y ~ g + age + sex + edu + (1 | item) + (1 | site), family = binomial)
+m2 <- glmer(y ~ g*christ + age + sex + edu + (1 | item) + (1 | site), family = binomial)
+m3 <- glmer(y ~ g*christ + age + sex + edu + (1 | item) + (g | site), family = binomial)
+# m3r <- glmer(y ~ g*christ + age + revsex + edu + (1 | item) + (g | site), family = binomial)
+
+summods(m0)
+summods(m1)
+summods(m2)
+summods(m3)
+
+summods(m1)$'Random Effects'$item
+summods(m2)$'Random Effects'$item
+summods(m3)$'Random Effects'$item
+
+### Model 3
+fixef(m3)
+
+logistic(fixef(m3)[1]) 
+logistic((fixef(m3)[1] + ranef(m3)$item[1,1])) # add lie
+logistic(fixef(m3)[1] + ranef(m3)$item[2,1]) # add murder
+logistic(fixef(m3)[1] + ranef(m3)$item[3,1]) # add steal
+logistic(fixef(m3)[1] + ranef(m3)$item[1,1] + ranef(m3)$item[2,1] + ranef(m3)$item[3,1]) # all
+logistic(fixef(m3)[1] + ranef(m3)$item[1,1] + ranef(m3)$item[2,1] + ranef(m3)$item[3,1] +
+           fixef(m3)[5] + fixef(m3)[4]) # all + men (sex = 1)
+logistic(fixef(m3)[1] + ranef(m3)$item[1,1] + ranef(m3)$item[2,1] + ranef(m3)$item[3,1] +
+           fixef(m3)[5] + fixef(m3)[6] + fixef(m3)[4]) # male with education for local god
+logistic(fixef(m3)[1] + ranef(m3)$item[1,1] + ranef(m3)$item[2,1] + ranef(m3)$item[3,1] +
+           fixef(m3)[5] + fixef(m3)[6] + fixef(m3)[2] + fixef(m3)[4]) # male with education for moralistic god
+
+## Table S2
+sitetease(m3)
+xtable(sitetease(m3))
+st <- sitetease(m3)
+sitelabs <- rownames(st)
+
+##################################
+### Graphs
+##################################
+### Figure S7.: Probability plots
+### Plot Loop
+
+add_label <- function(xfrac, yfrac, label, pos = 1, ...) {
+  u <- par("usr")
+  x <- u[1] + xfrac * (u[2] - u[1])
+  y <- u[4] - yfrac * (u[4] - u[3])
+  text(x, y, label, pos = pos, ...)
+}
+
+add_label2 <- function(xfrac, yfrac, label, pos = 2, ...) {
+  u <- par("usr")
+  x <- u[1] + xfrac * (u[2] - u[1])
+  y <- u[4] - yfrac * (u[4] - u[3])
+  text(x, y, label, pos = pos, ...)
+}
+
+labels <- c("Cachoeira", "Co.Tanna", "Huatasani",  "In.Tanna", "Kananga", 
+            "Lovu", "Marajo", "Mauritius", "Mysore", "Samburu",
+            "Sursurunga", "Turkana", "Tyva Republic", "Yasawa")
+labelsx <- c("\u2020", "\u2020", "\u2020", "", "\u2020", "", "\u2020", 
+             "", "", "\u2020", "\u2020", "\u2020", "", "\u2020")
+
+xtick <- seq(0, 1, by = 1)
+ytick <- seq(0.5:1, by = .5)
+xl <- c("LD", "MD")
+yl <- c("0.5", "1.0")
+old.par <- par(mar = c(0, 0, 0, 0), mai = c(1, 1, 1, .5)) #b,l,t,r
+par(old.par)
+
+par(mfrow = c(5, 3), mai = c(0.3, 0.55, 0.3, 0.45))
+for(i in 1:14){
+  xs <- c(0, 1) # x-values (deity)
+  pr_yes <- logistic(fixef(m3)[1] + ranef(m3)$site[i,1] + (fixef(m3)[2] + ranef(m3)$site[i,2])*xs)
+  plot(xs, (pr_yes), ylim=c(0.40, 1), type="b", 
+       cex = 1.5, cex.lab = 1.25, cex.axis = 1.25, 
+       xaxt= "n", yaxt = "n", ylab = "Pr(Saying Yes)", xlab = NA, pch = 20)
+  axis(side = 1, at = xtick, labels = xl, cex.axis = 1.25, digits = 2)
+  axis(side = 2, at = ytick, labels = yl, cex.axis = 1.25, digits = 2)
+  baseline_pr <- logistic(fixef(m3)[1] + fixef(m3)[2]*xs)
+  points(xs, baseline_pr, type = "l", col = "gray")
+  add_label(.50, .82, labels[i], cex = 1.2) # labels: adjust for monitors
+  add_label2(.99, .9, labelsx[i], cex = .9) # crosses: adjust for monitors
+}
+
+###################################################
+###### Teasing apart deities: Models in S3 ########
+###################################################
+m0t <- glmer(xyy$y ~ 1 + (1 | item) + (1 | siten), family = binomial, data = xyy)
+m1t <- glmer(y ~ g + age + sex + edu + (1 | item) + (1 | siten), family = binomial)
+m2t <- glmer(y ~ g*christ + age + sex + edu + (1 | item) + (1 | siten), family = binomial)
+m3t <- glmer(y ~ g*christ + age + sex + edu + (1 | item) + (g | siten), family = binomial)
+
+summods(m0t)
+summods(m1t)
+summods(m2t)
+summods(m3t)
+
+summods(m1t)$'Random Effects'$item
+summods(m2t)$'Random Effects'$item
+summods(m3t)$'Random Effects'$item
+
+### Model 3
+logistic(fixef(m3t)[1]) 
+logistic(fixef(m3t)[1] + ranef(m3t)$item[1,1]) # add lie
+logistic(fixef(m3t)[1] + ranef(m3t)$item[2,1]) # add murder
+logistic(fixef(m3t)[1] + ranef(m3t)$item[3,1]) # add steal
+logistic(fixef(m3t)[1] + ranef(m3t)$item[1,1] + ranef(m3t)$item[2,1] + ranef(m3t)$item[3,1]) # all
+logistic(fixef(m3t)[1] + ranef(m3t)$item[1,1] + ranef(m3t)$item[2,1] + ranef(m3t)$item[3,1] +
+           fixef(m3t)[5]) # all + men (sex = 1)
+logistic(fixef(m3t)[1] + ranef(m3t)$item[1,1] + ranef(m3t)$item[2,1] + ranef(m3t)$item[3,1] +
+           fixef(m3t)[5]) + fixef(m3t)[6]# all + men (sex = 1) and education
+
+## Table S4
+sitetease(m3t)
+xtable(sitetease(m3t))
+st2 <- sitetease(m3t)
+sitelabs2 <- rownames(st2)
+
+####################################
+###### Free-list Analyses ##########
+####################################
+rm(list = ls())
+setwd()
+
+dsub <- read.delim("dsub.txt") # load demographic data
+FL <- read.delim("FL.txt") # load free-list data
+dsub$X <- NULL
+FL$X <- NULL
+
+BGL.S <-  CalculateSalience(FL, Order = "Order", Subj = "FLID", CODE = "BGL", Salience = "BGL.S")
+BGD.S  <-  CalculateSalience(BGL.S, Order = "Order", Subj = "FLID", CODE = "BGD", Salience = "BGD.S")
+LGL.S <-  CalculateSalience(BGD.S, Order = "Order", Subj = "FLID", CODE = "LGL", Salience = "LGL.S")
+FL.S  <-  CalculateSalience(LGL.S, Order = "Order", Subj = "FLID", CODE = "LGD", Salience = "LGD.S")
+
+SAL.BL <- SalienceByCode(FL.S, CODE = "BGL", Salience = "BGL.S", 
+                         Subj = "FLID", dealWithDoubles = "MAX")
+SAL.BD <- SalienceByCode(FL.S, CODE = "BGD", Salience = "BGD.S", 
+                         Subj = "FLID", dealWithDoubles = "MAX")
+SAL.LL <- SalienceByCode(FL.S, CODE = "LGL", Salience = "LGL.S", 
+                         Subj = "FLID", dealWithDoubles = "MAX")
+SAL.LD <- SalienceByCode(FL.S, CODE = "LGD", Salience = "LGD.S", 
+                         Subj = "FLID", dealWithDoubles = "MAX")
+
+sallabs <- c("CODE", "SmithsS")
+SBL <- SAL.BL[order(-SAL.BL$CODE),] 
+SBL <- SBL[sallabs]
+SBD <- SAL.BD[order(-SAL.BD$CODE),]
+SBD <- SBD[sallabs]
+SLL <- SAL.LL[order(-SAL.LL$CODE),]
+SLL <- SLL[sallabs]
+SLD <- SAL.LD[order(-SAL.LD$CODE),]
+SLD <- SLD[sallabs]
+merge1 <- merge(SBL, SBD, by = "CODE", all = T)
+colnames(merge1)[2] <- "Pleases Haine"
+colnames(merge1)[3] <- "Angers Haine"
+merge2 <- merge(merge1, SLL, by = "CODE", all = T)
+colnames(merge2)[4] <- "Pleases Ishoko"
+merge3 <- merge(merge2, SLD, by = "CODE", all = T)
+colnames(merge3)[5] <- "Angers Ishoko"
+xtable(merge3)
+
+FLtab.ma <- FreeListTable(FL.S, CODE = "BGD", Order = "Order", Salience = "BGD.S",
+                          Subj = "FLID", tableType = "PRESENCE")
+FLtab.mp <- FreeListTable(FL.S, CODE = "BGL", Order = "Order", Salience = "BGL.S",
+                          Subj = "FLID", tableType = "PRESENCE")
+FLtab.lp <- FreeListTable(FL.S, CODE = "LGL", Order = "Order", Salience = "LGL.S",
+                          Subj = "FLID", tableType = "PRESENCE")
+FLtab.la <- FreeListTable(FL.S, CODE = "LGD", Order = "Order", Salience = "LGD.S",
+                          Subj = "FLID", tableType = "PRESENCE")
+
+colnames(FLtab.ma)[1] <- "FLID"
+colnames(FLtab.mp)[1] <- "FLID"
+colnames(FLtab.la)[1] <- "FLID"
+colnames(FLtab.lp)[1] <- "FLID"
+
+exlab <- c("FLID", "Morality")
+
+ma <- FLtab.ma[exlab]
+mp <- FLtab.mp[exlab]
+la <- FLtab.la[exlab]
+lp <- FLtab.lp[exlab]
+
+colnames(ma)[2] <- "Moral.ma"
+colnames(mp)[2] <- "Moral.mp"
+colnames(la)[2] <- "Moral.la"
+colnames(lp)[2] <- "Moral.lp"
+
+mr1 <- merge(ma, mp, by = "FLID")
+mr2 <- merge(mr1, la, by = "FLID")
+mr3 <- merge(mr2, lp, by = "FLID")
+dat <- merge(mr3, dsub, by = "FLID")
+
+dat$Mungu <- NA
+dat$Mungu[dat$Mungu.r == "Yes"] <- 1
+dat$Mungu[dat$Mungu.r == "No"] <- 0
+dat$Mungu[dat$Mungu.r == "DK"] <- 0
+
+dat$sex <- NA
+dat$sex[dat$Sex == "M"] <- 1
+dat$sex[dat$Sex == "F"] <- 0
+
+datlab <- c("FLID", "Moral.ma", "Moral.mp", "Moral.la", "Moral.lp", "Mungu", "sex")
+d <- dat[datlab]
+
+library(reshape2)
+dat.s <- melt(d, id.vars = c("FLID", "Mungu", "sex"), 
+              measure.vars = c("Moral.ma", "Moral.mp", "Moral.la", "Moral.lp"))
+colnames(dat.s)[4] <- "moral.type"
+colnames(dat.s)[5] <- "present"
+
+dat.s$haine <- NA
+dat.s$haine[dat.s$moral.type=="Moral.ma"] <- 1
+dat.s$haine[dat.s$moral.type=="Moral.mp"] <- 1
+dat.s$haine[dat.s$moral.type=="Moral.la"] <- 0
+dat.s$haine[dat.s$moral.type=="Moral.lp"] <- 0
+
+dat.s$angry <- NA
+dat.s$angry[dat.s$moral.type=="Moral.ma"] <- 1
+dat.s$angry[dat.s$moral.type=="Moral.mp"] <- 0
+dat.s$angry[dat.s$moral.type=="Moral.la"] <- 1
+dat.s$angry[dat.s$moral.type=="Moral.lp"] <- 0
+
+##############
+# Set up variables for regression
+
+xxx <- split(dat.s, dat.s$moral.type)
+d.ha <- xxx$Moral.ma
+d.hp <- xxx$Moral.mp
+d.ia <- xxx$Moral.la
+d.ip <- xxx$Moral.lp
+
+priorm1 <- c(set_prior("normal(0,1)", class = "b"))
+
+m.ha <- brm(formula = present ~ sex + Mungu, 
+            data = d.ha, family = binomial("logit"),
+            prior = priorm1,
+            warmup = 1000, iter = 5000, chains = 2, 
+            seed = 7)
+
+m.hp <- brm(formula = present ~ sex + Mungu, 
+            data = d.hp, family = binomial("logit"),
+            prior = priorm1,
+            warmup = 1000, iter = 5000, chains = 2, 
+            seed = 7)
+
+m.ia <- brm(formula = present ~ sex + Mungu, 
+            data = d.ia, family = binomial("logit"),
+            prior = priorm1,
+            warmup = 1000, iter = 5000, chains = 2, 
+            seed = 7)
+
+m.ip <- brm(formula = present ~ sex + Mungu, 
+            data = d.ip, family = binomial("logit"),
+            prior = priorm1,
+            warmup = 1000, iter = 5000, chains = 2, 
+            seed = 7)
+
+summary(m.ha)
+summary(m.hp)
+summary(m.ia)
+summary(m.ip)
+
+####################################
+###### Flower Plot for FL Data #####
+####################################
+library(extrafont)
+loadfonts()
+
+# Circle function
+
+circle <- function(xorig, yorig, radius, add, ...){ 
+  x <- seq(-radius, radius, length.out = 1000)
+  y <- sapply(x, function(z) sqrt(radius^2 - z^2))
+  if(add == TRUE){
+    lines(xorig + c(x, rev(x)), c(yorig + y, yorig + rev(-y)),
+          type = "l", ...)
+  } else {
+    plot(xorig + c(x, rev(x)), c(yorig + y, yorig + rev(-y)),
+         type = "l", ...)
+  }
+}
+
+par(mfrow = c(1,2), mai = c(.6, .1, .3, .1)) #bottom, left, top, right
+
+### Empty plot space (for larger monitors)
+
+plot(c(-110, 110), c(-110, 110), type = "n", xlab = "", ylab = "", 
+     axes = FALSE, asp = 1, family = "Calibri") 
+
+### Circles!
+### lwd = Smith's S*10
+
+rad <- 30 # predefined radius
+
+circle(0, 0, rad, add = TRUE, col = "black", lwd = 4.9) # domain circle
+
+circle(0, 80, rad, add = TRUE, col = "black", lwd = 4.9) # top circle
+circle(60, 60, rad, add = TRUE, col = "black", lwd = 3.5) # top-right
+circle(80, 0, rad, add = TRUE, col = "black", lwd = 1.2) # right circle
+circle(60, -60, rad, add = TRUE, col = "black", lty = 2) # lower right
+circle(0, -80, rad, add = TRUE, col = "black", lty = 2) # bottom circle
+circle(-60, -60, rad, add = TRUE, col = "black", lty = 2) # lower left
+circle(-80, 0, rad, add = TRUE, col = "black", lty = 2) # left circle
+circle(-60, 60, rad, add = TRUE, col = "black",  lty = 2) # top-left
+
+### Connections!
+notch <- 50 # length for vertical and horizontal lines
+nitch <- 21.5 # length for diagonals
+natch <- 38.5 # length for diagonals
+
+segments(0, rad, 0, notch, lwd = 4.9) # top
+segments(nitch, nitch, natch, natch, lwd = 3.5) # upper right
+segments(rad, 0, notch, 0, lwd = 1.2) # right 
+segments(nitch, -nitch, natch, -natch, lty = 2) # lower right
+segments(0, -rad, 0, -notch, lty = 2) # bottom
+segments(-nitch, -nitch, -natch, -natch, lty = 2) # lower left
+segments(-rad, 0, -notch, 0, lty = 2) # left
+segments(-nitch, nitch, -natch, natch, lty = 2) # upper left
+
+### Labels!
+text(0, 0, labels = "Angers", font = 2) # center
+text(0, 80, labels = "Morality", font = 2) # top
+text(60, 60, labels = "D/K", font = 2) #2 o'clock
+text(80, 0, labels = "Drugs", font = 2) # right
+text(60, -60, labels = "Ritual", font = 2) # 4 o'clock
+text(0, -80, labels = "Virtue", font = 2) # bottom
+text(-60, -60, labels = "Religion", font = 2) # 8 o'clock
+text(-80, 0, labels = "Misc.", font = 2) # 9 o'clock
+text(-60, 60, labels = "Etiquette", font = 2) # 10 o'clock
+
+text(10, rad+10, labels = "0.49", font = 2) #top
+text(35, 23, labels = "0.35", font = 2) # 2
+text(rad+10, -5, labels = "0.12", font = 2) # left
+text(23, -35, labels = "0.08", font = 2) # 4
+text(-10, -rad-10, labels = "0.05", font = 2) # bottom
+text(-37, -25, labels = "0.02", font = 2) # 7
+text(-rad-10, 5, labels = "0.02", font = 2) # right
+text(-25, 37, labels = "0.00", font = 2) # 10
+
+##################
+### Right plot
+
+plot(c(-110, 110), c(-110, 110), type = "n", 
+     xlab = "", ylab = "", axes = FALSE, asp = 1, family = "Calibri") 
+
+### Circles!
+### lwd = Smith's S*10
+
+circle(0, 0, rad, add = TRUE, col = "black", lwd = 3.1) # domain circle
+
+circle(0, 80, rad, add = TRUE, col = "black", lwd = 3.1) # top circle
+circle(60, 60, rad, add = TRUE, col = "black", lwd = 2.8) # top-right
+circle(80, 0, rad, add = TRUE, col = "black", lwd = 2.3) # right circle
+circle(60, -60, rad, add = TRUE, col = "black", lwd = 1.9) # lower right
+circle(0, -80, rad, add = TRUE, col = "black", lty = 2) # bottom circle
+circle(-60, -60, rad, add = TRUE, col = "black", lty = 2) # lower left
+circle(-80, 0, rad, add = TRUE, col = "black", lty = 2) # left circle
+circle(-60, 60, rad, add = TRUE, col = "black",  lty = 2) # top-left
+
+segments(0, rad, 0, notch, lwd = 3.1) # top
+segments(nitch, nitch, natch, natch, lwd = 2.8) # upper right
+segments(rad, 0, notch, 0, lwd = 2.3) # right 
+segments(nitch, -nitch, natch, -natch, lwd = 1.9) # lower right
+segments(0, -rad, 0, -notch, lty = 2) # bottom
+segments(-nitch, -nitch, -natch, -natch, lty = 2) # lower left
+segments(-rad, 0, -notch, 0, lty = 2) # left
+segments(-nitch, nitch, -natch, natch, lty = 2) # upper left
+
+### Labels!
+text(0, 0, labels = "Pleases", font = 2) # center
+text(0, 80, labels = "People", font = 2) # top
+text(60, 60, labels = "D/K", font = 2) #2 o'clock
+text(80, 0, labels = "Virtue", font = 2) # right
+text(60, -60, labels = "Ritual", font = 2) # 4 o'clock
+text(0, -80, labels = "Morality", font = 2) # bottom
+text(-60, -60, labels = "Misc.", font = 2) # 8 o'clock
+text(-80, 0, labels = "Food", font = 2) # 9 o'clock
+text(-60, 60, labels = "Etiquette", font = 2) # 10 o'clock
+
+text(10, rad+10, labels = "0.31", font = 2) #top
+text(35, 23, labels = "0.28", font = 2) # 2
+text(rad+10, -5, labels = "0.23", font = 2) # left
+text(23, -35, labels = "0.19", font = 2) # 4
+text(-10, -rad-10, labels = "0.09", font = 2) # bottom
+text(-37, -25, labels = "0.03", font = 2) # 7
+text(-rad-10, 5, labels = "0.03", font = 2) # right
+text(-25, 37, labels = "0.02", font = 2) # 10
+
+#############################
+## Odds Ratio Plot 
+#############################
+
+par(mfrow = c(1, 2), 
+    mai = c(.2, 0, .2, 0), 
+    mar = c(2, 4.5, 2, 1),
+    oma = c(1, .2, .2, .2)) # bottom, left, top, right
+
+labs <- c("Intercept", "Sex", "Mission?")
+
+## Angry
+ticksa <- c(0.01, 0.05, 0.20, 1.00, 5)
+
+fixef(m.ha)
+x <- 1:length(labs)
+OR <- exp(c(-0.5829716,  0.3631265,  0.3243808))
+LL <- exp(c(-1.6665921, -0.7193244, -0.7439076 ))
+UL <- exp(c(0.4790629, 1.4517723, 1.4320517 ))
+LS <- OR - LL
+US <- UL - OR
+tab <- data.frame(cbind(labs, x, OR, LL, UL, LS, US))
+
+plot(OR, x, pch = 16, xlim = c(0.01, 6.5), ylim = c(0.5, length(labs)), xlab = NA, 
+     ylab = NA, yaxt = "n", xaxt = "n", frame.plot = F, log = "x")
+arrows(x0 = OR - LS, y0 = x, x1 = US + OR, 
+       y1 = x, code = 3, angle = 90, length = 0.05)
+abline(v = 1, lty = 2)
+axis(2, at = x, labels = labs, las = 2)
+axis(1, at = ticksa, 
+     labels = ifelse(ticksa >= 1, sprintf("%.1f", ticksa),
+                     sprintf("%0.2f", ticksa)))
+par(new = TRUE)
+
+fixef(m.ia)
+x2 <- x - .2
+OR2 <- exp(c(-1.2392111,  0.8208018, -0.2985739 ))
+LL2 <- exp(c(-2.461474, -0.336849, -1.453536))
+UL2 <- exp(c(-0.1004140,  2.0035939,  0.8565572 ))
+LS2 <- OR2 - LL2
+US2 <- UL2 - OR2
+tab2 <- data.frame(cbind(labs, x, OR, LL, UL, LS, US))
+
+plot(OR2, x2, pch = 1, xlim = c(.01, 6.5), ylim = c(0.5, length(labs)), xlab = NA, 
+     ylab = NA, yaxt = "n", xaxt = "n", frame.plot = F, log = "x")
+arrows(x0 = OR2 - LS2, y0 = x2, x1 = US2 + OR2, 
+       y1 = x2, code = 3, angle = 90, length = 0.05, lty = 3)
+
+title("Angers", cex.main = 1)
+
+## Pleased
+ticksb <- c(0.001, 0.01, 0.10, 1.00, 10)
+
+fixef(m.hp)
+x <- 1:length(labs)
+OR <- exp(c(-2.4166316, -0.4144612, -0.3217097))
+LL <- exp(c(-4.228808, -1.979390, -1.899109  ))
+UL <- exp(c(-0.9171559, 1.1304275,  1.1638076 ))
+LS <- OR - LL
+US <- UL - OR
+tab <- data.frame(cbind(labs, x, OR, LL, UL, LS, US))
+
+plot(OR, x, pch = 16, xlim = c(0.0005, 7), ylim = c(0.5, length(labs)), xlab = NA, 
+     ylab = NA, yaxt = "n", xaxt = "n", frame.plot = F, log = "x")
+arrows(x0 = OR - LS, y0 = x, x1 = US + OR, 
+       y1 = x, code = 3, angle = 90, length = 0.05)
+abline(v = 1, lty = 2)
+axis(1, at = ticksb, 
+     labels = ifelse(ticksb >= 1, sprintf("%.1f", ticksb),
+                     sprintf("%0.2f", ticksb)))
+par(new = TRUE)
+
+fixef(m.ip)
+x2 <- x - .2
+OR2 <- exp(c(-4.3322719,  0.3722298, -0.4161971 ))
+LL2 <- exp(c(-7.623480, -1.383196, -2.233541   ))
+UL2 <- exp(c(-2.044940 , 2.142632,  1.365099  ))
+LS2 <- OR2 - LL2
+US2 <- UL2 - OR2
+tab2 <- data.frame(cbind(labs, x2, OR2, LL2, UL2, LS2, US2))
+
+plot(OR2, x2, pch = 1, xlim = c(0.0005, 7), ylim = c(0.5, length(labs)), xlab = NA, 
+     ylab = NA, yaxt = "n", xaxt = "n", frame.plot = F, log = "x")
+arrows(x0 = OR2 - LS2, y0 = x2, x1 = US2 + OR2, 
+       y1 = x2, code = 3, angle = 90, length = 0.05, lty = 3)
+abline(v = 1, lty = 2)
+
+title("Pleases", cex.main = 1)
+
+legend(0.000015, 2.3, legend = c("Haine", "Ishoko"),
+       col = c("black", "black"), pch = c(16, 1), 
+       lty = c(1,3), cex = 0.8, xpd = NA)
