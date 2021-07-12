@@ -3,7 +3,7 @@
 #######################################################
 
 # contact author: Benjamin Grant Purzycki (email: bgpurzycki@cas.au.dk)
-# Last Updated June 6, 2020
+# Last Updated July 12, 2021
 
 #########################
 ######### Setup #########
@@ -17,12 +17,11 @@ library(gmodels)
 library(lme4)
 library(xtable)
 library(doBy)
-library(rethinking) # need to install rstan as well if need be
+library(rethinking) # needs rstan and everything required to make it work as well
 library(reshape)
 library(car)
 library(AnthroTools)
 library(brms)
-library(car)
 
 # Dummy code function
 mordum <- function(vd, vo){
@@ -53,20 +52,65 @@ summods <- function(model){
 
 ## Table function
 sitetease <- function(m){
-  siteints <- summods(m)$'Random Effects'$site
-  siteints$plusindint <- siteints$`(Intercept)`+ fixef(m)[1]
-  siteints$betaind <- siteints$g1 + fixef(m)[2]
-  siteints$prplsind <- logistic(siteints$`(Intercept)`+ fixef(m)[1])
-  siteints$orplsind <- exp((siteints$`(Intercept)`+ fixef(m)[1]))
-  siteints <- siteints[,c(1,3,5,6,2,4)]
-  siteints <- siteints[order(-siteints$prplsind),]
+  siteints <- summods(m)$'Random Effects'$site[1]
+  siteints$siteintplus <- siteints$`(Intercept)`+ fixef(m)[1]
+  siteints$Probability <- logistic(siteints$siteintplus)
+  siteints$beta <- ranef(m)$site[,2]
+  siteints$betapls <- siteints$siteintplus + siteints$beta
+  siteints$Probability2 <- logistic(siteints$betapls)
+  siteints$diff <- siteints$Probability2 - siteints$Probability
+  siteints <- siteints[order(-siteints$Probability),]
   return(siteints)
 }
 
-############################################
-############ Load and prep data ############
+mycol1 <-  rgb(255, 255, 255, max = 255, alpha = 100, names = "white")
+mycol2 <- rgb(5,5,5, max=255, alpha = 100, names = "darkgray") 
+
 ############################################
 d <- read.csv("ALLSITES_V3.6.csv")
+
+## Histograms
+bglie <- data.frame(table(d$BGLIEIMP, d$SITE))[6:80,] # rm empty bits
+lglie <- data.frame(table(d$LGLIEIMP, d$SITE))[6:80,] # rm empty bits
+LIE <- cbind(bglie, lglie)
+colnames(LIE) <- c("L1", "SITE", "BGL", "L2", "SITE2", "LGL")
+
+par(mfrow = c(5, 3), mar = c(4, 2, 2, 1)) # bottom, left, top, right
+for(site in unique(LIE$SITE)){
+  sub <- subset(LIE, site == LIE$SITE) # subset the data based on this value
+  barplot(rbind(sub$BGL, sub$LGL), beside = T,
+          col = c(mycol2, mycol1), names = sub$L1,
+          xlab = site)
+}
+
+bgmurd <- data.frame(table(d$BGMURDIMP, d$SITE))[6:80,] # rm empty bits
+lgmurd <- data.frame(table(d$LGMURDIMP, d$SITE))[6:80,] # rm empty bits
+MURD <- cbind(bgmurd, lgmurd)
+colnames(MURD) <- c("L1", "SITE", "BGM", "L2", "SITE2", "LGM")
+
+par(mfrow = c(5, 3), mar = c(4, 2, 2, 1)) # bottom, left, top, right
+for(site in unique(MURD$SITE)){
+  sub <- subset(MURD, site == MURD$SITE) # subset the data based on this value
+  barplot(rbind(sub$BGM, sub$LGM), beside = T,
+          col = c(mycol2, mycol1), names = sub$L1,
+          xlab = site)
+}
+
+bgstl <- data.frame(table(d$BGSTLIMP, d$SITE))[6:80,] # rm empty bits
+lgstl <- data.frame(table(d$LGSTEALIMP, d$SITE))[6:80,] # rm empty bits
+STEAL <- cbind(bgstl, lgstl)
+colnames(STEAL) <- c("L1", "SITE", "BGS", "L2", "SITE2", "LGS")
+
+par(mfrow = c(5, 3), mar = c(4, 2, 2, 1)) # bottom, left, top, right
+for(site in unique(STEAL$SITE)){
+  sub <- subset(STEAL, site == STEAL$SITE) # subset the data based on this value
+  barplot(rbind(sub$BGS, sub$LGS), beside = T,
+          col = c(mycol2, mycol1), names = sub$L1,
+          xlab = site)
+}
+
+###
+
 labs <- c("SITE", "CID", "SEX", "AGE", "FORMALED", "BGMURDIMP", "BGLIEIMP", 
           "BGSTLIMP", "LGMURDIMP", "LGSTEALIMP", "LGLIEIMP", "LGTYPE")
 data <- d[labs]
@@ -110,6 +154,7 @@ data$EDU.C <- centerbysite(data$FORMALED, data$SITE)
 #############################
 ### Table 1: Demographics ###
 #############################
+## Demographic Table in Main
 demog <- summaryBy(SEX + AGE + FORMALED ~ SITE, 
                  data = data, 
                  FUN = function(x) { c(N = length(x), 
@@ -197,20 +242,26 @@ sex <- as.factor(ds$SEX) # partcipant sex
 edu <- ds$EDU.C # centered years of formal education
 id <- as.factor(ds$CID)
 christ <- as.factor(ds$CHRIST) # Christian god as moralistic god
-revsex <- as.factor(ds$revsex)
 
-xxx <- data.frame(cbind(y, g, item, site, siten, age, sex, edu)) # Data for m0 with complete cases (compare nobs to m1-m3)
+xxx <- data.frame(y, g, item, site, siten, age, sex, edu, christ) # Data for m0 with complete cases (compare nobs to m1-m3)
 xyy <- xxx[complete.cases(xxx),]
-xyy$g <- as.factor(xyy$g)
-xyy$item <- as.factor(xyy$item)
-xyy$site <- as.factor(xyy$site)
-xyy$siten <- as.factor(xyy$siten)
 
 m0 <- glmer(xyy$y ~ 1 + (1 | item) + (1 | site), family = binomial, data = xyy)
-m1 <- glmer(y ~ g + age + sex + edu + (1 | item) + (1 | site), family = binomial)
-m2 <- glmer(y ~ g*christ + age + sex + edu + (1 | item) + (1 | site), family = binomial)
-m3 <- glmer(y ~ g*christ + age + sex + edu + (1 | item) + (g | site), family = binomial)
-# m3r <- glmer(y ~ g*christ + age + revsex + edu + (1 | item) + (g | site), family = binomial)
+m1 <- glmer(y ~ g + age + sex + edu + (1 | item) + (1 | site), family = binomial, data = xyy)
+m2 <- glmer(y ~ g + christ + age + sex + edu + (1 | item) + (1 | site), family = binomial, data = xyy)
+m3 <- glmer(y ~ christ + age + sex + edu + (1 | item) + (g | site),
+            family = binomial, data = xyy)
+
+# Check stan conversion to inspect structure for notation purposes
+ library(glmer2stan)
+ datlist <- list(y = xyy$y, g = xyy$g, christ = as.numeric(xyy$christ),
+     age = xyy$age, sex = xyy$sex, edu = xyy$edu,
+     item = as.numeric(factor(xyy$item)), site = as.numeric(factor(xyy$site)))
+     
+ m4s <- glmer2stan(y ~ christ + age + sex + edu + (1 | item) + (g | site),
+                  data = datlist, 
+                  family = "binomial", sample = FALSE)
+ cat(m4s$model)
 
 summods(m0)
 summods(m1)
@@ -224,17 +275,16 @@ summods(m3)$'Random Effects'$item
 ### Model 3
 fixef(m3)
 
-logistic(fixef(m3)[1]) 
-logistic((fixef(m3)[1] + ranef(m3)$item[1,1])) # add lie
-logistic(fixef(m3)[1] + ranef(m3)$item[2,1]) # add murder
-logistic(fixef(m3)[1] + ranef(m3)$item[3,1]) # add steal
-logistic(fixef(m3)[1] + ranef(m3)$item[1,1] + ranef(m3)$item[2,1] + ranef(m3)$item[3,1]) # all
-logistic(fixef(m3)[1] + ranef(m3)$item[1,1] + ranef(m3)$item[2,1] + ranef(m3)$item[3,1] +
-           fixef(m3)[5] + fixef(m3)[4]) # all + men (sex = 1)
-logistic(fixef(m3)[1] + ranef(m3)$item[1,1] + ranef(m3)$item[2,1] + ranef(m3)$item[3,1] +
-           fixef(m3)[5] + fixef(m3)[6] + fixef(m3)[4]) # male with education for local god
-logistic(fixef(m3)[1] + ranef(m3)$item[1,1] + ranef(m3)$item[2,1] + ranef(m3)$item[3,1] +
-           fixef(m3)[5] + fixef(m3)[6] + fixef(m3)[2] + fixef(m3)[4]) # male with education for moralistic god
+logistic(fixef(m2)[1]) 
+logistic((fixef(m2)[1] + ranef(m2)$item[1,1])) # add lie
+logistic(fixef(m2)[1] + ranef(m2)$item[2,1]) # add murder
+logistic(fixef(m2)[1] + ranef(m2)$item[3,1]) # add steal
+
+logistic(fixef(m2)[1] + 
+           fixef(m2)[4] + fixef(m2)[5] + fixef(m2)[6]) # male of average age and education for local god
+logistic(fixef(m2)[1] + 
+           fixef(m2)[4] + fixef(m2)[5] + fixef(m2)[6] + fixef(m2)[5] + 
+           fixef(m2)[3]) # male of average age and education for local god + Xian
 
 ## Table S2
 sitetease(m3)
@@ -269,34 +319,36 @@ labelsx <- c("\u2020", "\u2020", "\u2020", "", "\u2020", "", "\u2020",
              "", "", "\u2020", "\u2020", "\u2020", "", "\u2020")
 
 xtick <- seq(0, 1, by = 1)
-ytick <- seq(0.5:1, by = .5)
+ytick <- seq(0, 1, by = .5)
 xl <- c("LD", "MD")
-yl <- c("0.5", "1.0")
+yl <- c("0.0", "0.5", "1.0")
 old.par <- par(mar = c(0, 0, 0, 0), mai = c(1, 1, 1, .5)) #b,l,t,r
 par(old.par)
 
 par(mfrow = c(5, 3), mai = c(0.3, 0.55, 0.3, 0.45))
 for(i in 1:14){
   xs <- c(0, 1) # x-values (deity)
-  pr_yes <- logistic(fixef(m3)[1] + ranef(m3)$site[i,1] + (fixef(m3)[2] + ranef(m3)$site[i,2])*xs)
-  plot(xs, (pr_yes), ylim=c(0.40, 1), type="b", 
+  pr_yes <- logistic(fixef(m3)[1] + ranef(m3)$site[i,1] + 
+                       (ranef(m3)$site[i,2]*xs))
+  plot(xs, (pr_yes), ylim = c(0, 1), type = "b", 
        cex = 1.5, cex.lab = 1.25, cex.axis = 1.25, 
        xaxt= "n", yaxt = "n", ylab = "Pr(Saying Yes)", xlab = NA, pch = 20)
   axis(side = 1, at = xtick, labels = xl, cex.axis = 1.25, digits = 2)
   axis(side = 2, at = ytick, labels = yl, cex.axis = 1.25, digits = 2)
-  baseline_pr <- logistic(fixef(m3)[1] + fixef(m3)[2]*xs)
+  baseline_pr <- logistic(fixef(m3)[1] + mean(ranef(m3)$site[,1]) + 
+                            mean(ranef(m3)$site[,2])*xs)
   points(xs, baseline_pr, type = "l", col = "gray")
   add_label(.50, .82, labels[i], cex = 1.2) # labels: adjust for monitors
-  add_label2(.99, .9, labelsx[i], cex = .9) # crosses: adjust for monitors
+  add_label2(.99, 0.9, labelsx[i], cex = 0.9) # crosses: adjust for monitors
 }
 
-###################################################
-###### Teasing apart deities: Models in S3 ########
-###################################################
-m0t <- glmer(xyy$y ~ 1 + (1 | item) + (1 | siten), family = binomial, data = xyy)
-m1t <- glmer(y ~ g + age + sex + edu + (1 | item) + (1 | siten), family = binomial)
-m2t <- glmer(y ~ g*christ + age + sex + edu + (1 | item) + (1 | siten), family = binomial)
-m3t <- glmer(y ~ g*christ + age + sex + edu + (1 | item) + (g | siten), family = binomial)
+#########################################################
+###### Teasing apart deities: Models in Table S3 ########
+#########################################################
+m0t <- glmer(y ~ 1 + (1 | item) + (1 | siten), family = binomial, data = xyy)
+m1t <- glmer(y ~ g + age + sex + edu + (1 | item) + (1 | siten), family = binomial, data = xyy)
+m2t <- glmer(y ~ g + christ + age + sex + edu + (1 | item) + (1 | siten), family = binomial, data = xyy)
+m3t <- glmer(y ~ christ + age + sex + edu + (1 | item) + (g | siten), family = binomial, data = xyy)
 
 summods(m0t)
 summods(m1t)
@@ -350,14 +402,11 @@ SAL.LD <- SalienceByCode(FL.S, CODE = "LGD", Salience = "LGD.S",
                          Subj = "FLID", dealWithDoubles = "MAX")
 
 sallabs <- c("CODE", "SmithsS")
-SBL <- SAL.BL[order(-SAL.BL$CODE),] 
-SBL <- SBL[sallabs]
-SBD <- SAL.BD[order(-SAL.BD$CODE),]
-SBD <- SBD[sallabs]
-SLL <- SAL.LL[order(-SAL.LL$CODE),]
-SLL <- SLL[sallabs]
-SLD <- SAL.LD[order(-SAL.LD$CODE),]
-SLD <- SLD[sallabs]
+SBL <- SAL.BL[sallabs]
+SBD <- SAL.BD[sallabs]
+SLL <- SAL.LL[sallabs]
+SLD <- SAL.LD[sallabs]
+
 merge1 <- merge(SBL, SBD, by = "CODE", all = T)
 colnames(merge1)[2] <- "Pleases Haine"
 colnames(merge1)[3] <- "Angers Haine"
@@ -430,7 +479,6 @@ dat.s$angry[dat.s$moral.type=="Moral.lp"] <- 0
 
 ##############
 # Set up variables for regression
-
 xxx <- split(dat.s, dat.s$moral.type)
 d.ha <- xxx$Moral.ma
 d.hp <- xxx$Moral.mp
@@ -438,6 +486,8 @@ d.ia <- xxx$Moral.la
 d.ip <- xxx$Moral.lp
 
 priorm1 <- c(set_prior("normal(0,1)", class = "b"))
+priorm2 <- c(set_prior("normal(0,1)", class = "b"),
+             set_prior("cauchy(0,2)", class = "sd"))
 
 m.ha <- brm(formula = present ~ sex + Mungu, 
             data = d.ha, family = binomial("logit"),
@@ -467,6 +517,13 @@ summary(m.ha)
 summary(m.hp)
 summary(m.ia)
 summary(m.ip)
+
+#m.both <- brm(formula = present ~ sex + Mungu + angry + haine + (1 | FLID),
+#              data = dat.s, family = bernoulli("logit"),
+#              prior = priorm2,
+#              warmup = 1000, iter = 5000, chains = 2,
+#              seed = 7)
+#summary(m.both)
 
 ####################################
 ###### Flower Plot for FL Data #####
