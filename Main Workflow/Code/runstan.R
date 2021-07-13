@@ -16,14 +16,14 @@ Site <- as.numeric(data$SITE)
 Male <- data$SEX
 
 Age <- data$AGE 
- for( i in 1:length(Age)){
-  Age[i] <- Age[i] - mean(data$AGE[which(Site==Site[i])],na.rm=TRUE)
- }
+# for( i in 1:length(Age)){
+#  Age[i] <- Age[i] - mean(data$AGE[which(Site==Site[i])],na.rm=TRUE)
+# }
  
 Education <- data$FORMALED 
- for( i in 1:length(Education)){
-  Education[i] <- Education[i] - mean(data$FORMALED[which(Site==Site[i])],na.rm=TRUE)
- }
+# for( i in 1:length(Education)){
+#  Education[i] <- Education[i] - mean(data$FORMALED[which(Site==Site[i])],na.rm=TRUE)
+# }
  
 data2 <- data.frame(Site,Age,Education,Male,OutcomeMoralistic,OutcomeLocal)
 
