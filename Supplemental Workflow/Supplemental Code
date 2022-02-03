@@ -67,7 +67,7 @@ mycol1 <-  rgb(255, 255, 255, max = 255, alpha = 100, names = "white")
 mycol2 <- rgb(5,5,5, max=255, alpha = 100, names = "darkgray") 
 
 ############################################
-d <- read.csv("ALLSITES_V3.6.csv")
+d <- read.table("./Data/ALLSITES_V3.7_tabdel.txt", sep = '\t', header = T)
 
 ## Histograms
 bglie <- data.frame(table(d$BGLIEIMP, d$SITE))[6:80,] # rm empty bits
