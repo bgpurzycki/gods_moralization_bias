@@ -1,5 +1,5 @@
 ### Prepping CERC Wave II set ###
-d <- read.csv("./Data/ALLSITES_V3.6.csv")
+d <- read.table("./Data/ALLSITES_V3.7_tabdel.txt", sep = '\t', header = T)
 
 labs <- c("SITE", "CID", "SEX", "AGE", "FORMALED", "BGMURDIMP", "BGLIEIMP", 
           "BGSTLIMP", "LGMURDIMP", "LGSTEALIMP", "LGLIEIMP", "LGTYPE")
